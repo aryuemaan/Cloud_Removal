@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  # ---------------------------------------------------------------------
+  # Cloud-removal inference API. Loads a trained checkpoint and serves
+  # /predict, /evaluate, /health over HTTP.
+  # ---------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: liss4-cloud-removal:latest
+    container_name: liss4-cloud-removal-api
+    ports:
+      - "8000:8000"
+    environment:
+      - CLOUD_REMOVAL_CONFIG=/app/config/config.yaml
+      - CLOUD_REMOVAL_CHECKPOINT=/app/checkpoints/ckpt_best.pt
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./outputs:/app/outputs
+      - ./config:/app/config
+    command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Uncomment for GPU inference (requires nvidia-container-toolkit on host):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------
+  # One-shot training job. Run explicitly with:
+  #   docker compose run --rm train
+  # ---------------------------------------------------------------------
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: liss4-cloud-removal:latest
+    container_name: liss4-cloud-removal-train
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+      - ./config:/app/config
+    command: ["python", "-m", "src.training.train", "--config", "config/config.yaml"]
+    profiles: ["train"]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------
+  # TensorBoard for monitoring training runs.
+  # ---------------------------------------------------------------------
+  tensorboard:
+    image: liss4-cloud-removal:latest
+    container_name: liss4-cloud-removal-tensorboard
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "6006:6006"
+    command: ["tensorboard", "--logdir", "/app/logs/tensorboard", "--host", "0.0.0.0", "--port", "6006"]
+    profiles: ["monitoring"]
